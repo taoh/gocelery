@@ -2,7 +2,7 @@ package gocelery
 
 import (
 	"os"
-	"sync"
+	"time"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -25,6 +25,9 @@ var rootCmd = &cobra.Command{
 var rootCmdV, cmdWorker *cobra.Command
 var configFile, logLevel, brokerUrl string
 var debugMode bool
+
+// create the worker manager
+var workerManager = &WorkerManager{}
 
 //Initializes flags
 func init() {
@@ -69,9 +72,9 @@ func installCommands() {
 			// Initialize
 			initializeConfig()
 			setupLogLevel()
-
 			// Run worker command
-			workerCmd(cmd, args)
+			workerManager.Connect()
+			workerManager.Start(cmd, args)
 		},
 	}
 	cmdWorker.PersistentFlags().StringVarP(&configFile, "config", "c", "", "config file (default is path/config.yaml|json|toml)")
@@ -82,21 +85,20 @@ func installCommands() {
 	rootCmd.AddCommand(cmdWorker)
 }
 
-var draining = false
-var wg sync.WaitGroup
-
-func listenToSignals() {
-	//TODO: handle graceful shutdown
-}
-
-func shutdown(status int) {
-	log.Debug("Shutting down")
-	os.Exit(status)
+func PublishTask(brokerURL string, taskName string, args []interface{}) {
+	// Initialize
+	viper.SetDefault("BrokerUrl", "amqp://localhost")
+	if brokerURL != "" {
+		viper.Set("BrokerUrl", brokerURL)
+	}
+	workerManager.Connect() // connect to worker manager
+	workerManager.PublishTask(taskName, args, nil, time.Time{}, time.Time{})
+	workerManager.Close() // close connetions
 }
 
 // Execute starts the execution of the worker based on configurations
 func Execute() {
+
 	installCommands()
-	go listenToSignals()
 	rootCmd.Execute()
 }

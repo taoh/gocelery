@@ -37,7 +37,7 @@ func (b *RabbitMqBroker) String() string {
 // Connect to rabbitmq
 func (b *RabbitMqBroker) Connect(uri string) error {
 	b.amqpURL = uri
-	log.Infof("Dialing [%s] - [%s]", b.amqpURL, viper.GetString("BrokerUrl"))
+	log.Debugf("Dialing [%s]", uri)
 	// dial the server
 	conn, err := amqp.Dial(b.amqpURL)
 	if err != nil {
@@ -95,7 +95,7 @@ func (b *RabbitMqBroker) Connect(uri string) error {
 
 // Close the broker and cleans up resources
 func (b *RabbitMqBroker) Close() error {
-	log.Debug("Closing broker: %s", b)
+	log.Debug("Closing broker: ", b)
 	return b.connection.Close()
 }
 
@@ -107,17 +107,20 @@ type Task struct {
 }
 
 // GetTasks waits and fetches the tasks from queue
-func (b *RabbitMqBroker) GetTasks() (<-chan *broker.Message, error) {
+func (b *RabbitMqBroker) GetTasks() <-chan *broker.Message {
 	msg := make(chan *broker.Message)
 	go func() {
 		// fetch messages
 		log.Debug("Waiting for messages")
-		deliveries, err := b.channel.Consume("celery", "",
+		deliveries, err := b.channel.Consume(
+			"celery",
+			"",   // Consumer
 			true, //AutoAck
 			false, false, false, nil)
 		if err != nil {
-			log.Error("Failed to consume messages")
+			log.Error("Failed to consume messages: ", err)
 			//TODO: deal with channel failure
+			return
 		}
 		for delivery := range deliveries {
 			log.Debug("Got a message!")
@@ -146,27 +149,38 @@ func (b *RabbitMqBroker) GetTasks() (<-chan *broker.Message, error) {
 		// 	time.Sleep(1 * time.Second)
 		// }
 	}()
-	return msg, nil
+	return msg
 }
 
-// PublishTaskResult sends task result back to task queue
-func (b *RabbitMqBroker) PublishTaskResult(key string, contentType string, body []byte) error {
+// PublishTask sends a task to queue
+func (b *RabbitMqBroker) PublishTask(key string, message *broker.Message) error {
 	msg := amqp.Publishing{
 		DeliveryMode: amqp.Persistent,
 		Timestamp:    time.Now(),
-		ContentType:  contentType,
-		Body:         body,
+		ContentType:  message.ContentType,
+		Body:         message.Body,
+	}
+	return b.channel.Publish("celery", "celery", false, false, msg)
+}
+
+// PublishTaskResult sends task result back to task queue
+func (b *RabbitMqBroker) PublishTaskResult(key string, message *broker.Message) error {
+	msg := amqp.Publishing{
+		DeliveryMode: amqp.Persistent,
+		Timestamp:    time.Now(),
+		ContentType:  message.ContentType,
+		Body:         message.Body,
 	}
 	return b.channel.Publish("celeryresults", key, false, false, msg)
 }
 
 // PublishTaskEvent sends task events back to event queue
-func (b *RabbitMqBroker) PublishTaskEvent(key string, contentType string, body []byte) error {
+func (b *RabbitMqBroker) PublishTaskEvent(key string, message *broker.Message) error {
 	msg := amqp.Publishing{
 		DeliveryMode: amqp.Persistent,
 		Timestamp:    time.Now(),
-		ContentType:  contentType,
-		Body:         body,
+		ContentType:  message.ContentType,
+		Body:         message.Body,
 	}
 	return b.channel.Publish("celeryev", key, false, false, msg)
 }

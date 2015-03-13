@@ -32,11 +32,6 @@
 			"Rev": "b7c233e2ef9be1016c63f66145161b317165ad7e"
 		},
 		{
-			"ImportPath": "github.com/docker/swarm/version",
-			"Comment": "v0.1.0-60-g58a373b",
-			"Rev": "58a373b7bb3a33784dde1016da49dc6b265e104e"
-		},
-		{
 			"ImportPath": "github.com/go-errors/errors",
 			"Rev": "01d535a7e0d0c52e283f462be8ceeb38e5bcaeeb"
 		},
@@ -80,6 +75,10 @@
 		{
 			"ImportPath": "github.com/streadway/amqp",
 			"Rev": "150b7f24d6ad507e6026c13d85ce1f1391ac7400"
+		},
+		{
+			"ImportPath": "github.com/twinj/uuid",
+			"Rev": "4d772442af203e27723acc7d1eea6c93cd319c57"
 		},
 		{
 			"ImportPath": "github.com/xordataexchange/crypt/backend",

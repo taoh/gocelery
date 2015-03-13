@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/swarm/version"
+	"github.com/taoh/gocelery/version"
 )
 
 const celeryTimeFormat = `"2006-01-02T15:04:05.999999"`
@@ -38,13 +38,14 @@ func (ct *celeryTime) MarshalJSON() (data []byte, err error) {
 
 // Task represents the a single piece of work
 type Task struct {
-	Task    string                 `json:"task"`
-	ID      string                 `json:"id"`
-	Args    []interface{}          `json:"args,omitempty"`
-	Kwargs  map[string]interface{} `json:"kwargs,omitempty"`
-	Retries int                    `json:"retries,omitempty"`
-	Eta     celeryTime             `json:"eta,omitempty"`
-	Expires celeryTime             `json:"expires,omitempty"`
+	Task        string                 `json:"task"`
+	ID          string                 `json:"id"`
+	Args        []interface{}          `json:"args,omitempty"`
+	Kwargs      map[string]interface{} `json:"kwargs,omitempty"`
+	Retries     int                    `json:"retries,omitempty"`
+	Eta         celeryTime             `json:"eta,omitempty"`
+	Expires     celeryTime             `json:"expires,omitempty"`
+	ContentType string                 `json:"-"`
 }
 
 func (t Task) String() string {
