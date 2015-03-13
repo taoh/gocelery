@@ -47,6 +47,12 @@ func main() {
 	gocelery.Execute()
 }
 ```
+run the demo
+
+```bash
+go run demo/main.go worker -l debug
+```
+
 ## Documentation
 [Godoc] (http://godoc.org/github.com/taoh/gocelery)
 

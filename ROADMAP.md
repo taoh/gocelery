@@ -5,6 +5,9 @@ Roadmap
 * [ ] Add Unit Tests
 * [ ] Comments & Docs
 
+####Client
+* [ ] Support submitting tasks from go
+
 ####Connection
 * [ ] Connection Recovery
 
