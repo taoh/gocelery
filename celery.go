@@ -1,11 +1,8 @@
 package gocelery
 
 import (
-	"fmt"
 	"os"
-	"os/signal"
 	"sync"
-	"syscall"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -89,22 +86,7 @@ var draining = false
 var wg sync.WaitGroup
 
 func listenToSignals() {
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-	for _ = range c {
-		// If interrupting for the second time,
-		// terminate un-gracefully
-		if draining {
-			shutdown(1)
-		}
-		fmt.Println("\ngocelery: Hitting Ctrl+C again will terminate all running tasks!")
-		// Gracefully shut down
-		draining = true
-		go func() {
-			wg.Wait()
-			shutdown(0)
-		}()
-	}
+	//TODO: handle graceful shutdown
 }
 
 func shutdown(status int) {
