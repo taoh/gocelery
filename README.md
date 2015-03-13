@@ -10,7 +10,7 @@ go get http://github.com/taoh/gocelery
 ```
 
 ## Example
-[demo/main.go](http://github.com/taoh/gocelery/demo/main.go)
+[demo/main.go](https://github.com/taoh/gocelery/blob/master/demo/main.go)
 
 ```go
 package main
@@ -48,5 +48,7 @@ func main() {
 }
 ```
 ## Documentation
+[Godoc] (http://godoc.org/github.com/taoh/gocelery)
 
 ## Copyright and license
+[The MIT License] (https://github.com/taoh/gocelery/blob/master/LICENSE)
