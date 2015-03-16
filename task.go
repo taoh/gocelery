@@ -73,9 +73,12 @@ type TaskResult struct {
 	TraceBack string       `json:"traceback"`
 }
 
+// EventType is enum of valid event types in celery
 type EventType string
 
+// Valid EventTypes
 const (
+	None            EventType = "None"
 	WorkerOffline   EventType = "worker-offline"
 	WorkerHeartbeat EventType = "worker-heartbeat"
 	WorkerOnline    EventType = "worker-online"
@@ -87,10 +90,12 @@ const (
 	TaskRevoked     EventType = "task-revoked"
 )
 
+// RoutingKey returns celery routing keys for events
 func (eventType EventType) RoutingKey() string {
 	return strings.Replace(string(eventType), "-", ".", -1)
 }
 
+// WorkerEvent implements the structure for worker related events
 type WorkerEvent struct {
 	Type      EventType `json:"type"`
 	Ident     string    `json:"sw_ident"`
@@ -109,6 +114,7 @@ const (
 	system   = "golang"
 )
 
+// NewWorkerEvent creates new worker events
 func NewWorkerEvent(eventType EventType) *WorkerEvent {
 	return &WorkerEvent{
 		Type:      eventType,
@@ -120,6 +126,7 @@ func NewWorkerEvent(eventType EventType) *WorkerEvent {
 	}
 }
 
+//NewTaskReceivedEvent creates new event for task received
 func NewTaskReceivedEvent(task *Task) map[string]interface{} {
 	taskEvent := map[string]interface{}{
 		"type":      TaskReceived,
@@ -135,6 +142,7 @@ func NewTaskReceivedEvent(task *Task) map[string]interface{} {
 	return taskEvent
 }
 
+//NewTaskFailedEvent creates new event for task failed
 func NewTaskFailedEvent(task *Task, taskResult *TaskResult, err error) map[string]interface{} {
 	taskEvent := map[string]interface{}{
 		"type":      TaskReceived,
@@ -147,18 +155,20 @@ func NewTaskFailedEvent(task *Task, taskResult *TaskResult, err error) map[strin
 	return taskEvent
 }
 
+//NewTaskSucceedEvent creates new event for task succeeded
 func NewTaskSucceedEvent(task *Task, taskResult *TaskResult, runtime time.Duration) map[string]interface{} {
 	taskEvent := map[string]interface{}{
 		"type":      TaskReceived,
 		"uuid":      task.ID,
 		"result":    taskResult.Result,
-		"runtime":   runtime,
+		"runtime":   runtime.Seconds(),
 		"hostname":  hostname,
 		"timestamp": time.Now().Unix(),
 	}
 	return taskEvent
 }
 
+//NewTaskStartedEvent creates new event for task started
 func NewTaskStartedEvent(task *Task) map[string]interface{} {
 	taskEvent := map[string]interface{}{
 		"type":      TaskReceived,

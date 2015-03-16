@@ -1,7 +1,7 @@
 package serializer
 
 import (
-	"errors"
+	"fmt"
 
 	"github.com/taoh/gocelery/serializer/json"
 	"github.com/taoh/gocelery/serializer/pickle"
@@ -15,19 +15,18 @@ type Serializer interface {
 
 var serializerRegistry = make(map[string]Serializer)
 
-var (
-	ErrSerializerNotFound = errors.New("Serializer not found")
-)
-
-func RegisterSerializer(name string, s Serializer) {
-	serializerRegistry[name] = s
+// RegisterSerializer adds a new serializer
+func RegisterSerializer(contentType string, s Serializer) {
+	serializerRegistry[contentType] = s
 }
 
-func NewSerializer(name string) (Serializer, error) {
-	if serializer, ok := serializerRegistry[name]; ok { // check if scheme is registered
+// NewSerializer returns the serializer from the given content type
+func NewSerializer(contentType string) (Serializer, error) {
+	if serializer, ok := serializerRegistry[contentType]; ok { // check if scheme is registered
 		return serializer, nil
 	}
-	return nil, ErrSerializerNotFound
+	err := fmt.Errorf("Serializer not found for content type [%s]", contentType)
+	return nil, err
 }
 
 func init() {

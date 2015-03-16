@@ -29,7 +29,8 @@ type Message struct {
 type Broker interface {
 	Connect(string) error
 	GetTasks() <-chan *Message
-	PublishTask(string, *Message) error
+	GetTaskResult(string) <-chan *Message
+	PublishTask(string, *Message, bool) error
 	PublishTaskResult(string, *Message) error
 	PublishTaskEvent(string, *Message) error
 	Close() error

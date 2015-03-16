@@ -2,6 +2,7 @@ package gocelery
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/signal"
 	"sort"
@@ -36,7 +37,7 @@ func RegisterWorker(name string, worker Worker) {
 	workerRegistery[name] = worker
 }
 
-// List all registered workers
+// RegisteredWorkers List all registered workers
 func RegisteredWorkers() []string {
 	keys := make([]string, 0, len(workerRegistery))
 	for key := range workerRegistery {
@@ -53,6 +54,7 @@ type WorkerManager struct {
 	ticker *time.Ticker // ticker for heartbeat
 }
 
+// Connect to broker
 func (manager *WorkerManager) Connect() {
 	log.Debug("Inside Worker: ", viper.Get("BrokerUrl"))
 	b := broker.NewBroker(viper.GetString("BrokerUrl"))
@@ -60,34 +62,31 @@ func (manager *WorkerManager) Connect() {
 	log.Debug("Created broker: ", b)
 }
 
-// Worker runs the worker command
+// Start worker runs the worker command
 func (manager *WorkerManager) Start(cmd *cobra.Command, args []string) {
 	sigs := make(chan os.Signal, 1)
 	done := make(chan bool, 1)
 
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
-		<-sigs       // listen to signals
+		<-sigs // listen to signals
+		manager.Stop()
+		manager.Close()
 		done <- true // send signals to done
 	}()
 
 	log.Debug("Worker is now running")
 
 	// now loops to wait for messages
-	manager.sendTaskEvent(WorkerOnline)
+	manager.sendWorkerEvent(WorkerOnline)
 
 	// start hearbeat
 	manager.startHeartbeat()
 
-	for {
-		select {
-		case <-done: // if we have done
-			log.Debug("CTRL+C Pressed, Exiting gracefully")
-			manager.Stop()
-			manager.Close()
-			os.Exit(0)
-		case message := <-manager.broker.GetTasks():
-			log.Info("Message type: ", message.ContentType)
+	// start getting tasks
+	for message := range manager.broker.GetTasks() {
+		log.Info("Message type: ", message.ContentType)
+		go func(message *broker.Message) {
 			serializer, err := serializer.NewSerializer(message.ContentType)
 			// convert message body to task
 			if err == nil {
@@ -114,22 +113,21 @@ func (manager *WorkerManager) Start(cmd *cobra.Command, args []string) {
 						}()
 					} else {
 						// execute the task in a worker immediately
-						go manager.runTask(&task)
+						manager.runTask(&task)
 					}
-				} else {
-					log.Error("Cannot deserialize content: ", message.ContentType, err)
 				}
 			} else {
-				log.Error("Unknown message content type: ", message.ContentType)
-
+				// send errors to server
+				log.Error("Cannot deserialize message:", err)
 			}
-
-		}
+		}(message)
 	}
+	log.Debug("message channel closed.")
 }
 
+// PublishTask sends a task to task queue as a client
 func (manager *WorkerManager) PublishTask(name string, args []interface{},
-	kwargs map[string]interface{}, eta time.Time, expires time.Time) {
+	kwargs map[string]interface{}, eta time.Time, expires time.Time, ignoreResult bool) *Task {
 	task := &Task{
 		Task:    name,
 		Args:    args,
@@ -144,7 +142,25 @@ func (manager *WorkerManager) PublishTask(name string, args []interface{},
 		ContentType: JSON,
 		Body:        res,
 	}
-	manager.broker.PublishTask("", message)
+	manager.broker.PublishTask(task.ID, message, ignoreResult)
+	// return the task object
+	return task
+}
+
+// GetTaskResult listens to celery and returns the task result for given task
+func (manager *WorkerManager) GetTaskResult(task *Task) *TaskResult {
+	// listen to queue
+	message := <-manager.broker.GetTaskResult(task.ID)
+	serializer, _ := serializer.NewSerializer(message.ContentType)
+	// convert message body to task
+	var taskResult TaskResult
+	_ = serializer.Deserialize(message.Body, &taskResult)
+	return &taskResult
+	// taskResult := &TaskResult{
+	// 	ID:     task.ID,
+	// 	Result: 5,
+	// 	Status: Success,
+	// }
 }
 
 func (manager *WorkerManager) startHeartbeat() {
@@ -154,12 +170,18 @@ func (manager *WorkerManager) startHeartbeat() {
 		for _ = range ticker.C {
 			// log.Debug("Sent heartbeat at: ", t)
 			// send heartbeat
-			manager.sendTaskEvent(WorkerHeartbeat)
+			manager.sendWorkerEvent(WorkerHeartbeat)
 		}
 	}()
 }
 
-func (manager *WorkerManager) sendTaskEvent(eventType EventType) {
+func (manager *WorkerManager) sendTaskEvent(eventType EventType, payload []byte) {
+	manager.broker.PublishTaskEvent(strings.Replace(eventType.RoutingKey(), "-", ".", -1),
+		&broker.Message{ContentType: JSON, Body: payload})
+}
+
+// Send Worker Events
+func (manager *WorkerManager) sendWorkerEvent(eventType EventType) {
 	workerEventPayload, _ := json.Marshal(NewWorkerEvent(eventType))
 	manager.broker.PublishTaskEvent(strings.Replace(eventType.RoutingKey(), "-", ".", -1),
 		&broker.Message{ContentType: JSON, Body: workerEventPayload})
@@ -171,34 +193,43 @@ func (manager *WorkerManager) stopHeartbeat() {
 	}
 }
 
+// Stop the worker
 func (manager *WorkerManager) Stop() {
 	manager.stopHeartbeat()
-	manager.sendTaskEvent(WorkerOffline)
+	manager.sendWorkerEvent(WorkerOffline)
 }
 
+// Close the worker
 func (manager *WorkerManager) Close() {
 	manager.broker.Close()
 }
 
-func (manager *WorkerManager) runTask(task *Task) error {
-	if worker, ok := workerRegistery[task.Task]; ok {
-		log.Debug("***** Working on task: ", task.Task)
-		serializer, _ := serializer.NewSerializer(task.ContentType)
-		taskEventPayload, _ := serializer.Serialize(NewTaskStartedEvent(task))
-		taskEventType := TaskStarted
-		manager.sendTaskEvent(TaskStarted)
+func (manager *WorkerManager) runTask(task *Task) (*TaskResult, error) {
+	// create task result
+	taskResult := &TaskResult{
+		ID:     task.ID,
+		Status: Started,
+	}
 
-		// create task result
-		taskResult := &TaskResult{
-			ID:     task.ID,
-			Status: Started,
-		}
+	taskEventType := None
+	serializer, _ := serializer.NewSerializer(task.ContentType)
+	var taskError error
+	var taskEventPayload []byte
+
+	if worker, ok := workerRegistery[task.Task]; ok {
+		log.Debug("Working on task: ", task.Task)
+
+		taskEventPayload, _ = serializer.Serialize(NewTaskStartedEvent(task))
+		taskEventType = TaskStarted
+		manager.sendTaskEvent(TaskStarted, taskEventPayload)
 
 		// check expiration
 		if !task.Expires.IsZero() && task.Expires.Before(time.Now().UTC()) {
 			// time expired, make the task Revoked
 			log.Warn("Task has expired", task.Expires)
 			taskResult.Status = Revoked
+			taskError = errors.New("Task has expired")
+			taskEventPayload, _ = serializer.Serialize(NewTaskFailedEvent(task, taskResult, taskError))
 			taskEventType = TaskRevoked
 		} else {
 			start := time.Now()
@@ -207,9 +238,12 @@ func (manager *WorkerManager) runTask(task *Task) error {
 			if err != nil {
 				log.Errorf("Failed to execute task [%s]: %s", task.Task, err)
 				err = errors.Wrap(err, 1)
+			} else {
+				log.Debug("Executed task in ", elapsed.Seconds()) //TODO: doesn't work??
 			}
 
 			if err != nil {
+				taskError = err
 				taskResult.Status = Failure
 				taskResult.TraceBack = err.(*errors.Error).ErrorStack()
 				taskEventPayload, _ = serializer.Serialize(NewTaskFailedEvent(task, taskResult, err))
@@ -221,17 +255,23 @@ func (manager *WorkerManager) runTask(task *Task) error {
 				taskEventType = TaskSucceeded
 			}
 		}
-		res, _ := serializer.Serialize(taskResult)
-		log.Debug("serialized output: ", len(res))
-		key := strings.Replace(task.ID, "-", "", -1)
-		manager.broker.PublishTaskResult(key, &broker.Message{ContentType: task.ContentType, Body: res})
-
-		// send task completed event
-		if taskEventPayload != nil {
-			manager.sendTaskEvent(taskEventType)
-		}
 	} else {
-		log.Errorf("Worker for task [%s] not found", task.Task)
+		taskErrorMessage := fmt.Sprintf("Worker for task [%s] not found", task.Task)
+		taskError = errors.New(taskErrorMessage)
+		taskResult.Status = Failure
+		taskResult.TraceBack = taskError.(*errors.Error).ErrorStack()
+		taskEventPayload, _ = serializer.Serialize(NewTaskFailedEvent(task, taskResult, taskError))
+		taskEventType = TaskFailed
 	}
-	return nil
+
+	res, _ := serializer.Serialize(taskResult)
+	//key := strings.Replace(task.ID, "-", "", -1)
+	manager.broker.PublishTaskResult(task.ID, &broker.Message{ContentType: task.ContentType, Body: res})
+
+	// send task completed event
+	if taskEventType != None {
+		manager.sendTaskEvent(taskEventType, taskEventPayload)
+	}
+
+	return taskResult, nil
 }

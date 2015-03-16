@@ -23,7 +23,7 @@ var rootCmd = &cobra.Command{
 }
 
 var rootCmdV, cmdWorker *cobra.Command
-var configFile, logLevel, brokerUrl string
+var configFile, logLevel, brokerURL string
 var debugMode bool
 
 // create the worker manager
@@ -43,7 +43,7 @@ func initializeConfig() {
 	viper.ReadInConfig()
 
 	if cmdWorker.PersistentFlags().Lookup("broker-url").Changed {
-		viper.Set("BrokerUrl", brokerUrl)
+		viper.Set("BrokerUrl", brokerURL)
 	}
 	if cmdWorker.PersistentFlags().Lookup("log-level").Changed {
 		viper.Set("LogLevel", logLevel)
@@ -80,20 +80,32 @@ func installCommands() {
 	cmdWorker.PersistentFlags().StringVarP(&configFile, "config", "c", "", "config file (default is path/config.yaml|json|toml)")
 	cmdWorker.PersistentFlags().BoolVarP(&debugMode, "debug", "d", false, "debug mode")
 	cmdWorker.PersistentFlags().StringVarP(&logLevel, "log-level", "l", "error", "log level, default is error. valid values: debug, info, warn, error, fatal")
-	cmdWorker.PersistentFlags().StringVarP(&brokerUrl, "broker-url", "b", "", "broker url")
+	cmdWorker.PersistentFlags().StringVarP(&brokerURL, "broker-url", "b", "", "broker url")
 
 	rootCmd.AddCommand(cmdWorker)
 }
 
-func PublishTask(brokerURL string, taskName string, args []interface{}) {
+// PublishTask publishes a task to queue
+func PublishTask(brokerURL string, taskName string, args []interface{}, ignoreResult bool) chan *TaskResult {
 	// Initialize
 	viper.SetDefault("BrokerUrl", "amqp://localhost")
 	if brokerURL != "" {
 		viper.Set("BrokerUrl", brokerURL)
 	}
 	workerManager.Connect() // connect to worker manager
-	workerManager.PublishTask(taskName, args, nil, time.Time{}, time.Time{})
-	workerManager.Close() // close connetions
+
+	task := workerManager.PublishTask(taskName, args, nil, time.Time{}, time.Time{}, ignoreResult)
+	if ignoreResult {
+		log.Debug("Task Result is ignored.")
+		return nil
+	}
+	taskResult := make(chan *TaskResult)
+	go func() {
+		log.Debug("Waiting for task result")
+		taskResult <- workerManager.GetTaskResult(task)
+		workerManager.Close() // close connetions
+	}()
+	return taskResult
 }
 
 // Execute starts the execution of the worker based on configurations

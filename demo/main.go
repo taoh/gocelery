@@ -4,6 +4,7 @@ package main
 
 import (
 	"fmt"
+	"math/rand"
 	"time"
 
 	log "github.com/Sirupsen/logrus"
@@ -25,8 +26,10 @@ func (a *Adder) Execute(task *gocelery.Task) (result interface{}, err error) {
 		}
 	}
 	result = sum
+
+	// simulate the wait
+	time.Sleep(time.Duration(rand.Int31n(3000)) * time.Millisecond)
 	log.Debug("task.Args: ", task.Args, " Result: ", result)
-	time.Sleep(2 * time.Second)
 	return
 }
 

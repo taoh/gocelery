@@ -8,8 +8,8 @@ import (
 	"time"
 
 	log "github.com/Sirupsen/logrus"
-
 	"github.com/taoh/gocelery/broker"
+
 	// ampq broker
 	"github.com/spf13/viper"
 	"github.com/streadway/amqp"
@@ -115,10 +115,10 @@ func (b *RabbitMqBroker) GetTasks() <-chan *broker.Message {
 		deliveries, err := b.channel.Consume(
 			"celery",
 			"",   // Consumer
-			true, //AutoAck
+			true, // AutoAck
 			false, false, false, nil)
 		if err != nil {
-			log.Error("Failed to consume messages: ", err)
+			log.Error("Failed to consume task messages: ", err)
 			//TODO: deal with channel failure
 			return
 		}
@@ -129,8 +129,7 @@ func (b *RabbitMqBroker) GetTasks() <-chan *broker.Message {
 				Body:        delivery.Body,
 			}
 		}
-		close(msg) // close the channel so we can loop again
-
+		close(msg) // close message after channel closed
 		// fake tests
 		// for i := 0; i < 3; i++ {
 		// 	args := []int{i, 5}
@@ -152,14 +151,69 @@ func (b *RabbitMqBroker) GetTasks() <-chan *broker.Message {
 	return msg
 }
 
+func (b *RabbitMqBroker) GetTaskResult(taskID string) <-chan *broker.Message {
+	msg := make(chan *broker.Message)
+	go func() {
+		// fetch messages
+		log.Debug("Waiting for Task Result Messages: ", taskID)
+		deliveries, err := b.channel.Consume(
+			taskID,
+			"",   // Consumer
+			true, // AutoAck
+			false, false, false, nil)
+		if err != nil {
+			log.Error("Failed to consume task result messages: ", err)
+			//TODO: deal with channel failure
+			return
+		}
+		delivery := <-deliveries
+		log.Debug("Got a task result message!")
+		msg <- &broker.Message{
+			ContentType: delivery.ContentType,
+			Body:        delivery.Body,
+		}
+
+		close(msg) // close message after channel closed
+	}()
+	return msg
+}
+
 // PublishTask sends a task to queue
-func (b *RabbitMqBroker) PublishTask(key string, message *broker.Message) error {
+func (b *RabbitMqBroker) PublishTask(key string, message *broker.Message, ignoreResults bool) error {
 	msg := amqp.Publishing{
 		DeliveryMode: amqp.Persistent,
 		Timestamp:    time.Now(),
 		ContentType:  message.ContentType,
 		Body:         message.Body,
 	}
+
+	if !ignoreResults {
+		log.Debug("Creating queues for Task:", key)
+		// create task result queue
+		var arguments amqp.Table
+		queueExpires := viper.GetInt("resultQueueExpires") //ARGV:
+		if queueExpires > 0 {
+			arguments = amqp.Table{"x-expires": queueExpires}
+		}
+		if err := b.newQueue(key, true, true, arguments); err != nil {
+			return err
+		}
+		log.Debug("Created Task Result Queue")
+		// bind queue to exchange
+		queueName := key
+		if err := b.channel.QueueBind(
+			queueName,       // queue name
+			queueName,       // routing key
+			"celeryresults", // exchange name
+			false,           // noWait
+			nil,             // arguments
+		); err != nil {
+			return err
+		}
+	} else {
+		log.Debug("Task Result ignored")
+	}
+	log.Debug("Publishing Task to queue")
 	return b.channel.Publish("celery", "celery", false, false, msg)
 }
 
@@ -171,6 +225,7 @@ func (b *RabbitMqBroker) PublishTaskResult(key string, message *broker.Message) 
 		ContentType:  message.ContentType,
 		Body:         message.Body,
 	}
+	log.Debug("Publishing Task Result:", key)
 	return b.channel.Publish("celeryresults", key, false, false, msg)
 }
 

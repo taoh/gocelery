@@ -6,7 +6,7 @@ Roadmap
 * [ ] Comments & Docs
 
 ####Client
-* [ ] Support submitting tasks from go
+* [x] Support submitting tasks from go
 
 ####Connection
 * [ ] Connection Recovery
