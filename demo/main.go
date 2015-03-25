@@ -3,7 +3,6 @@
 package main
 
 import (
-	"fmt"
 	"math/rand"
 	"time"
 
@@ -34,14 +33,18 @@ func (a *Adder) Execute(task *gocelery.Task) (result interface{}, err error) {
 }
 
 func main() {
+	worker := gocelery.New(&gocelery.Config{
+		LogLevel: "debug",
+	})
+	defer worker.Close()
+
 	gocelery.RegisterWorker("tasks.add", &Adder{})
 	// print all registered workers
 	workers := gocelery.RegisteredWorkers()
-	fmt.Println("Workers:")
 	for _, worker := range workers {
-		fmt.Printf("\t%s", worker)
+		log.Debugf("Registered Worker: %s", worker)
 	}
 
 	// start executing
-	gocelery.Execute()
+	worker.StartWorkers()
 }

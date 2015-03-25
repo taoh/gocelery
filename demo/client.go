@@ -14,8 +14,12 @@ func main() {
 	j := 12
 	args := []interface{}{i, j}
 
-	gocelery.PublishTask(
-		"",          // broker url, default is amqp://localhost
+	worker := gocelery.New(&gocelery.Config{
+		LogLevel: "debug",
+	})
+	defer worker.Close()
+
+	worker.Enqueue(
 		"tasks.add", // task name
 		args,        // arguments
 		true,        // ignoreResults
@@ -23,8 +27,7 @@ func main() {
 
 	log.Info("Task Executed.")
 
-	taskResult := gocelery.PublishTask(
-		"",          // broker url, default is amqp://localhost
+	taskResult := worker.Enqueue(
 		"tasks.add", // task name
 		args,        // arguments
 		false,       // ignoreResults

@@ -1,6 +1,6 @@
 # GoCelery
 
-a golang port of [Celery](http://www.celeryproject.org/) distributed task engine. It supports executing and submitting tasks, and can interop with celery engine or celery python client. 
+a golang port of [Celery](http://www.celeryproject.org/) distributed task engine. It supports executing and submitting tasks, and can interop with celery engine or celery python client.
 
 
 ## Installation
@@ -16,7 +16,6 @@ go get http://github.com/taoh/gocelery
 package main
 
 import (
-	"fmt"
 	"math/rand"
 	"time"
 
@@ -47,23 +46,26 @@ func (a *Adder) Execute(task *gocelery.Task) (result interface{}, err error) {
 }
 
 func main() {
+	worker := gocelery.New(&gocelery.Config{
+		LogLevel: "debug",
+	})
+	defer worker.Close()
+
 	gocelery.RegisterWorker("tasks.add", &Adder{})
 	// print all registered workers
 	workers := gocelery.RegisteredWorkers()
-	fmt.Println("Workers:")
 	for _, worker := range workers {
-		fmt.Printf("\t%s", worker)
+		log.Debugf("Registered Worker: %s", worker)
 	}
 
 	// start executing
-	gocelery.Execute()
+	worker.StartWorkers()
 }
-
 ```
 start the worker process
 
 ```bash
-go run demo/main.go worker -l debug
+go run demo/main.go
 ```
 
 
@@ -84,8 +86,12 @@ func main() {
 	j := 12
 	args := []interface{}{i, j}
 
-	gocelery.PublishTask(
-		"",          // broker url, default is amqp://localhost
+	worker := gocelery.New(&gocelery.Config{
+		LogLevel: "debug",
+	})
+	defer worker.Close()
+
+	worker.Enqueue(
 		"tasks.add", // task name
 		args,        // arguments
 		true,        // ignoreResults
@@ -93,8 +99,7 @@ func main() {
 
 	log.Info("Task Executed.")
 
-	taskResult := gocelery.PublishTask(
-		"",          // broker url, default is amqp://localhost
+	taskResult := worker.Enqueue(
 		"tasks.add", // task name
 		args,        // arguments
 		false,       // ignoreResults

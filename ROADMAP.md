@@ -10,12 +10,12 @@ Roadmap
 
 ####Connection
 * [ ] Connection Recovery
-* [x] Handle graceful shutdown through SIGINT or SIGTERM
 
 ####Task
 * [ ] Retry logic
 * [x] Eta support
 * [x] Expires support
+* [x] Schedule Task support
 
 ####Security
 * [ ] TLS authentication

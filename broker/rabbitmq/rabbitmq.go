@@ -1,9 +1,6 @@
 package gocelery
 
-//
 import (
-	// "time"
-
 	"fmt"
 	"time"
 
