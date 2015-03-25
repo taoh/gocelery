@@ -8,7 +8,6 @@ import (
 )
 
 func main() {
-	log.SetLevel(log.InfoLevel)
 	log.Info("We can run the task and ignore result")
 	i := 13
 	j := 12
@@ -27,7 +26,7 @@ func main() {
 
 	log.Info("Task Executed.")
 
-	taskResult := worker.Enqueue(
+	taskResult, _ := worker.Enqueue(
 		"tasks.add", // task name
 		args,        // arguments
 		false,       // ignoreResults

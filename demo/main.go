@@ -3,9 +3,6 @@
 package main
 
 import (
-	"math/rand"
-	"time"
-
 	log "github.com/Sirupsen/logrus"
 	"github.com/taoh/gocelery"
 )
@@ -27,14 +24,15 @@ func (a *Adder) Execute(task *gocelery.Task) (result interface{}, err error) {
 	result = sum
 
 	// simulate the wait
-	time.Sleep(time.Duration(rand.Int31n(3000)) * time.Millisecond)
+	//time.Sleep(time.Duration(rand.Int31n(1000)) * time.Millisecond)
+	// time.Sleep(1 * time.Second)
 	log.Debug("task.Args: ", task.Args, " Result: ", result)
 	return
 }
 
 func main() {
 	worker := gocelery.New(&gocelery.Config{
-		LogLevel: "debug",
+		LogLevel: "info",
 	})
 	defer worker.Close()
 

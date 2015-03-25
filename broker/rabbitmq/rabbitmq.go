@@ -2,22 +2,24 @@ package gocelery
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/taoh/gocelery/broker"
 
 	// ampq broker
-	"github.com/spf13/viper"
 	"github.com/streadway/amqp"
 )
 
 // RabbitMqBroker implements RabbitMq broker
 type RabbitMqBroker struct {
+	sync.Mutex
 	amqpURL string
 
-	connection *amqp.Connection
-	channel    *amqp.Channel
+	connection      *amqp.Connection
+	channel         *amqp.Channel
+	resultsChannels map[string]*amqp.Channel
 }
 
 //
@@ -48,6 +50,8 @@ func (b *RabbitMqBroker) Connect(uri string) error {
 		return err
 	}
 
+	b.resultsChannels = make(map[string]*amqp.Channel)
+
 	log.Debug("Connected to rabbitmq")
 	//create exchanges
 	// note that the exchange must be the same as celery to avoid fatal errors
@@ -67,10 +71,10 @@ func (b *RabbitMqBroker) Connect(uri string) error {
 	// create and bind queues
 	queueName := queueName()
 	var arguments amqp.Table
-	queueExpires := viper.GetInt("queueExpires") //ARGV:
-	if queueExpires > 0 {
-		arguments = amqp.Table{"x-expires": queueExpires}
-	}
+	// queueExpires := viper.GetInt("queueExpires") //ARGV:
+	// if queueExpires > 0 {
+	// 	arguments = amqp.Table{"x-expires": queueExpires}
+	// }
 	if err = b.newQueue(queueName, true, false, arguments); err != nil {
 		return err
 	}
@@ -96,19 +100,12 @@ func (b *RabbitMqBroker) Close() error {
 	return b.connection.Close()
 }
 
-//Task HACKS rremove this after
-type Task struct {
-	Task string        `json:"task"`
-	ID   string        `json:"id"`
-	Args []interface{} `json:"args,omitempty"`
-}
-
 // GetTasks waits and fetches the tasks from queue
 func (b *RabbitMqBroker) GetTasks() <-chan *broker.Message {
 	msg := make(chan *broker.Message)
 	go func() {
 		// fetch messages
-		log.Debug("Waiting for messages")
+		log.Infof("Waiting for tasks at: %s", b.amqpURL)
 		deliveries, err := b.channel.Consume(
 			"celery",
 			"",   // Consumer
@@ -148,29 +145,63 @@ func (b *RabbitMqBroker) GetTasks() <-chan *broker.Message {
 	return msg
 }
 
+func (b *RabbitMqBroker) channelForTask(name string) *amqp.Channel {
+	b.Lock()
+	defer b.Unlock()
+
+	if channel, ok := b.resultsChannels[name]; ok {
+		return channel
+	}
+	channel, err := b.connection.Channel()
+	if err != nil {
+		return nil
+	}
+	b.resultsChannels[name] = channel
+	return channel
+}
+
+// GetTaskResult fetchs task result for the specified taskID
 func (b *RabbitMqBroker) GetTaskResult(taskID string) <-chan *broker.Message {
 	msg := make(chan *broker.Message)
 	go func() {
 		// fetch messages
 		log.Debug("Waiting for Task Result Messages: ", taskID)
-		deliveries, err := b.channel.Consume(
+		channel := b.channelForTask(taskID)
+		if channel == nil {
+			log.Error("Cannot get channel for task")
+			return
+		}
+		deliveries, err := channel.Consume(
 			taskID,
-			"",   // Consumer
-			true, // AutoAck
+			taskID, // Consumer tag
+			false,  // AutoAck
 			false, false, false, nil)
+
+		// delete channel
 		if err != nil {
-			log.Error("Failed to consume task result messages: ", err)
-			//TODO: deal with channel failure
+			log.Error("Failed to consume task result messages: ", taskID, " error: ", err)
+			//b.channel.QueueUnbind(taskID, taskID, "celeryresults", nil)
+			// b.channel.Cancel(taskID, false)
 			return
 		}
 		delivery := <-deliveries
-		log.Debug("Got a task result message!")
+		if delivery.Body == nil {
+			log.Error("Got a task result message: ", taskID, " body: ", string(delivery.Body))
+		}
 		msg <- &broker.Message{
 			ContentType: delivery.ContentType,
 			Body:        delivery.Body,
 		}
+		channel.Close()
 
-		close(msg) // close message after channel closed
+		b.Lock()
+		delete(b.resultsChannels, taskID)
+		b.Unlock()
+		// delete queue
+		//b.channel.QueueUnbind(taskID, taskID, "celeryresults", nil)
+		// err = b.channel.Cancel(taskID, false)
+		//log.Info("Deleting queue: ", taskID, " err: ", err)
+
 	}()
 	return msg
 }
@@ -188,17 +219,18 @@ func (b *RabbitMqBroker) PublishTask(key string, message *broker.Message, ignore
 		log.Debug("Creating queues for Task:", key)
 		// create task result queue
 		var arguments amqp.Table
-		queueExpires := viper.GetInt("resultQueueExpires") //ARGV:
-		if queueExpires > 0 {
-			arguments = amqp.Table{"x-expires": queueExpires}
-		}
+		// queueExpires := viper.GetInt("resultQueueExpires") //ARGV:
+		// if queueExpires > 0 {
+		// 	arguments = amqp.Table{"x-expires": queueExpires}
+		// }
 		if err := b.newQueue(key, true, true, arguments); err != nil {
+			log.Error("Failed to create queue: ", err)
 			return err
 		}
 		log.Debug("Created Task Result Queue")
 		// bind queue to exchange
 		queueName := key
-		if err := b.channel.QueueBind(
+		if err := b.channelForTask(key).QueueBind(
 			queueName,       // queue name
 			queueName,       // routing key
 			"celeryresults", // exchange name

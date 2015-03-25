@@ -8,7 +8,6 @@ import (
 )
 
 func main() {
-	log.SetLevel(log.InfoLevel)
 	log.Info("Scheduling tasks")
 
 	done := make(chan struct{})

@@ -22,7 +22,7 @@ type GoCelery struct {
 // New creates a GoCelery instance with given config
 func New(config *Config) *GoCelery {
 	if config.LogLevel == "" {
-		config.LogLevel = "error"
+		config.LogLevel = "info"
 	}
 	if config.BrokerURL == "" {
 		config.BrokerURL = "amqp://localhost"
@@ -43,7 +43,6 @@ func New(config *Config) *GoCelery {
 	}
 	// start cron work
 	gocelery.cron.Start()
-
 	return gocelery
 }
 
@@ -53,6 +52,7 @@ func (gocelery *GoCelery) Close() {
 	// make sure we're closed
 	gocelery.workerManager.Close()
 	gocelery.cron.Stop()
+	log.Info("gocelery stopped.")
 }
 
 // set up log level. default is error
@@ -72,10 +72,10 @@ func setupLogLevel(config *Config) {
 // the function returns immediately with a nil channel returned. Otherwise, a result
 // channel is returned so client can wait for the result.
 func (gocelery *GoCelery) Enqueue(taskName string, args []interface{}, ignoreResult bool) (chan *TaskResult, error) {
-	if !IsWorkerRegistered(taskName) {
-		return nil, fmt.Errorf("No worker registered for task: %s", taskName)
+	task, err := gocelery.workerManager.PublishTask(taskName, args, nil, time.Time{}, time.Time{}, ignoreResult)
+	if err != nil {
+		return nil, err
 	}
-	task := gocelery.workerManager.PublishTask(taskName, args, nil, time.Time{}, time.Time{}, ignoreResult)
 	if ignoreResult {
 		log.Debug("Task Result is ignored.")
 		return nil, nil
@@ -91,9 +91,6 @@ func (gocelery *GoCelery) Enqueue(taskName string, args []interface{}, ignoreRes
 // EnqueueWithSchedule adds a task that is scheduled repeatedly.
 // Schedule is specified in a string with cron format
 func (gocelery *GoCelery) EnqueueWithSchedule(spec string, taskName string, args []interface{}) error {
-	if !IsWorkerRegistered(taskName) {
-		return fmt.Errorf("No worker registered for task: %s", taskName)
-	}
 	return gocelery.cron.AddFunc(spec, func() {
 		log.Infof("Running scheduled task %s: %s", spec, taskName)
 		gocelery.Enqueue(taskName, args, true)
@@ -102,5 +99,6 @@ func (gocelery *GoCelery) EnqueueWithSchedule(spec string, taskName string, args
 
 // StartWorkers start running the workers
 func (gocelery *GoCelery) StartWorkers() {
+	log.Info("gocelery started.")
 	gocelery.workerManager.Start()
 }

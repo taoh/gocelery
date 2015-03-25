@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -18,9 +19,12 @@ import (
 
 // WorkerManager starts and stop worker jobs
 type workerManager struct {
+	sync.Mutex
 	brokerURL string
 	broker    broker.Broker
 	ticker    *time.Ticker // ticker for heartbeat
+
+	taskExecuted uint64
 }
 
 // Connect to broker. Returns an error if connection fails.
@@ -59,7 +63,7 @@ func (manager *workerManager) Start() {
 
 	// start getting tasks
 	for message := range manager.broker.GetTasks() {
-		log.Info("Message type: ", message.ContentType)
+		log.Debug("Message type: ", message.ContentType)
 		go func(message *broker.Message) {
 			serializer, err := serializer.NewSerializer(message.ContentType)
 			// convert message body to task
@@ -72,7 +76,7 @@ func (manager *workerManager) Start() {
 					taskEventPayload, _ := serializer.Serialize(NewTaskReceivedEvent(&task))
 					manager.broker.PublishTaskEvent(strings.Replace(TaskReceived.RoutingKey(), "-", ".", -1),
 						&broker.Message{ContentType: message.ContentType, Body: taskEventPayload})
-					log.Info("Processing task: ", task.Task)
+					log.Debug("Processing task: ", task.Task)
 
 					// check eta
 					duration := time.Duration(0)
@@ -101,7 +105,7 @@ func (manager *workerManager) Start() {
 
 // PublishTask sends a task to task queue as a client
 func (manager *workerManager) PublishTask(name string, args []interface{},
-	kwargs map[string]interface{}, eta time.Time, expires time.Time, ignoreResult bool) *Task {
+	kwargs map[string]interface{}, eta time.Time, expires time.Time, ignoreResult bool) (*Task, error) {
 	task := &Task{
 		Task:    name,
 		Args:    args,
@@ -111,14 +115,17 @@ func (manager *workerManager) PublishTask(name string, args []interface{},
 	}
 	task.ID = uuid.NewV4().String()
 
-	res, _ := json.Marshal(task)
+	res, err := json.Marshal(task)
+	if err != nil {
+		return nil, err
+	}
 	message := &broker.Message{
 		ContentType: JSON,
 		Body:        res,
 	}
 	manager.broker.PublishTask(task.ID, message, ignoreResult)
 	// return the task object
-	return task
+	return task, nil
 }
 
 // GetTaskResult listens to celery and returns the task result for given task
@@ -128,7 +135,11 @@ func (manager *workerManager) GetTaskResult(task *Task) *TaskResult {
 	serializer, _ := serializer.NewSerializer(message.ContentType)
 	// convert message body to task
 	var taskResult TaskResult
-	_ = serializer.Deserialize(message.Body, &taskResult)
+	if message.Body != nil {
+		serializer.Deserialize(message.Body, &taskResult)
+	} else {
+		log.Errorf("Task result message is nil")
+	}
 	return &taskResult
 	// taskResult := &TaskResult{
 	// 	ID:     task.ID,
@@ -179,6 +190,7 @@ func (manager *workerManager) Close() {
 }
 
 func (manager *workerManager) runTask(task *Task) (*TaskResult, error) {
+
 	// create task result
 	taskResult := &TaskResult{
 		ID:     task.ID,
@@ -208,12 +220,16 @@ func (manager *workerManager) runTask(task *Task) (*TaskResult, error) {
 		} else {
 			start := time.Now()
 			result, err := worker.Execute(task)
+
+			manager.Lock()
+			manager.taskExecuted = manager.taskExecuted + 1
+			log.Infof("Executed task [%s] [%s] [%s] in %f seconds", task.Task, task.ID, result, elapsed.Seconds())
+			manager.Unlock()
+
 			elapsed := time.Since(start)
 			if err != nil {
 				log.Errorf("Failed to execute task [%s]: %s", task.Task, err)
 				err = errors.Wrap(err, 1)
-			} else {
-				log.Debug("Executed task in ", elapsed.Seconds()) //TODO: doesn't work??
 			}
 
 			if err != nil {
