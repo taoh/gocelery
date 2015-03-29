@@ -8,6 +8,11 @@
 			"Rev": "539d4dc034c079a7188b5d4ca9650632d73c66e8"
 		},
 		{
+			"ImportPath": "github.com/apcera/nats",
+			"Comment": "v1.0.6-15-gcb61eee",
+			"Rev": "cb61eee00a57a6163bdadbd978b3aeba3293a3a9"
+		},
+		{
 			"ImportPath": "github.com/go-errors/errors",
 			"Rev": "01d535a7e0d0c52e283f462be8ceeb38e5bcaeeb"
 		},

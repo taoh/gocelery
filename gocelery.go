@@ -3,13 +3,17 @@ package gocelery
 import (
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/robfig/cron"
 
+	// import nats broker
+	_ "github.com/taoh/gocelery/broker/nats"
 	// import rabbitmq broker
 	_ "github.com/taoh/gocelery/broker/rabbitmq"
+	"github.com/twinj/uuid"
 )
 
 // GoCelery creates an instance of entry
@@ -52,7 +56,6 @@ func (gocelery *GoCelery) Close() {
 	// make sure we're closed
 	gocelery.workerManager.Close()
 	gocelery.cron.Stop()
-	log.Info("gocelery stopped.")
 }
 
 // set up log level. default is error
@@ -72,7 +75,32 @@ func setupLogLevel(config *Config) {
 // the function returns immediately with a nil channel returned. Otherwise, a result
 // channel is returned so client can wait for the result.
 func (gocelery *GoCelery) Enqueue(taskName string, args []interface{}, ignoreResult bool) (chan *TaskResult, error) {
-	task, err := gocelery.workerManager.PublishTask(taskName, args, nil, time.Time{}, time.Time{}, ignoreResult)
+	task := &Task{
+		Task:    taskName,
+		Args:    args,
+		Kwargs:  nil,
+		Eta:     celeryTime{time.Time{}},
+		Expires: celeryTime{time.Time{}},
+	}
+	task.ID = uuid.NewV4().String()
+	taskResult := make(chan *TaskResult)
+
+	// make sure we subscribe to task result before we submit task
+	// to avoid the problem that task may finish execution before we even subscribe
+	// to result
+	var wg sync.WaitGroup
+	wg.Add(1)
+	if !ignoreResult {
+		log.Debug("Waiting for Task Result: ", task.ID)
+		taskResult = gocelery.workerManager.GetTaskResult(task)
+		wg.Done()
+	} else {
+		wg.Done()
+	}
+
+	wg.Wait()
+	log.Debug("Publishing task: ", task.ID)
+	task, err := gocelery.workerManager.PublishTask(task, ignoreResult)
 	if err != nil {
 		return nil, err
 	}
@@ -80,11 +108,7 @@ func (gocelery *GoCelery) Enqueue(taskName string, args []interface{}, ignoreRes
 		log.Debug("Task Result is ignored.")
 		return nil, nil
 	}
-	taskResult := make(chan *TaskResult)
-	go func() {
-		log.Debug("Waiting for task result")
-		taskResult <- gocelery.workerManager.GetTaskResult(task)
-	}()
+
 	return taskResult, nil
 }
 

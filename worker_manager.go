@@ -14,7 +14,6 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/taoh/gocelery/broker"
 	"github.com/taoh/gocelery/serializer"
-	"github.com/twinj/uuid"
 )
 
 // WorkerManager starts and stop worker jobs
@@ -50,6 +49,7 @@ func (manager *workerManager) Start() {
 		<-sigs // listen to signals
 		manager.Stop()
 		manager.Close()
+		log.Info("gocelery stopped.")
 		done <- true // send signals to done
 	}()
 
@@ -62,64 +62,66 @@ func (manager *workerManager) Start() {
 	manager.startHeartbeat()
 
 	// start getting tasks
-	for message := range manager.broker.GetTasks() {
-		log.Debug("Message type: ", message.ContentType)
-		go func(message *broker.Message) {
-			serializer, err := serializer.NewSerializer(message.ContentType)
-			// convert message body to task
-			if err == nil {
-				var task Task
-				err = serializer.Deserialize(message.Body, &task)
+	ch := manager.broker.GetTasks()
+	for {
+		select {
+		case <-done:
+			log.Debug("Received done signal")
+			return
+		case message := <-ch:
+			log.Debug("Message type: ", message.ContentType, " body:", string(message.Body))
+			go func(message *broker.Message) {
+				serializer, err := serializer.NewSerializer(message.ContentType)
+				// convert message body to task
 				if err == nil {
-					task.ContentType = message.ContentType // stores the content type for the task
-					// publish task received event
-					taskEventPayload, _ := serializer.Serialize(NewTaskReceivedEvent(&task))
-					manager.broker.PublishTaskEvent(strings.Replace(TaskReceived.RoutingKey(), "-", ".", -1),
-						&broker.Message{ContentType: message.ContentType, Body: taskEventPayload})
-					log.Debug("Processing task: ", task.Task)
+					var task Task
 
-					// check eta
-					duration := time.Duration(0)
-					if !task.Eta.IsZero() {
-						duration = task.Eta.Sub(time.Now().UTC())
-					}
-					if duration > 0 {
-						timer := time.NewTimer(duration) // wait until ready
-						go func() {
-							<-timer.C
+					err = serializer.Deserialize(message.Body, &task)
+					if err == nil {
+						task.ContentType = message.ContentType // stores the content type for the task
+						// publish task received event
+						taskEventPayload, _ := serializer.Serialize(NewTaskReceivedEvent(&task))
+						manager.broker.PublishTaskEvent(strings.Replace(TaskReceived.RoutingKey(), "-", ".", -1),
+							&broker.Message{
+								Timestamp:   time.Now(),
+								ContentType: message.ContentType,
+								Body:        taskEventPayload,
+							})
+						log.Debug("Processing task: ", task.Task, " ID:", task.ID)
+
+						// check eta
+						duration := time.Duration(0)
+						if !task.Eta.IsZero() {
+							duration = task.Eta.Sub(time.Now().UTC())
+						}
+						if duration > 0 {
+							timer := time.NewTimer(duration) // wait until ready
+							go func() {
+								<-timer.C
+								manager.runTask(&task)
+							}()
+						} else {
+							// execute the task in a worker immediately
 							manager.runTask(&task)
-						}()
-					} else {
-						// execute the task in a worker immediately
-						manager.runTask(&task)
+						}
 					}
+				} else {
+					// send errors to server
+					log.Error("Cannot deserialize message:", err)
 				}
-			} else {
-				// send errors to server
-				log.Error("Cannot deserialize message:", err)
-			}
-		}(message)
+			}(message)
+		}
 	}
-	log.Debug("message channel closed.")
 }
 
 // PublishTask sends a task to task queue as a client
-func (manager *workerManager) PublishTask(name string, args []interface{},
-	kwargs map[string]interface{}, eta time.Time, expires time.Time, ignoreResult bool) (*Task, error) {
-	task := &Task{
-		Task:    name,
-		Args:    args,
-		Kwargs:  kwargs,
-		Eta:     celeryTime{eta},
-		Expires: celeryTime{expires},
-	}
-	task.ID = uuid.NewV4().String()
-
+func (manager *workerManager) PublishTask(task *Task, ignoreResult bool) (*Task, error) {
 	res, err := json.Marshal(task)
 	if err != nil {
 		return nil, err
 	}
 	message := &broker.Message{
+		Timestamp:   time.Now(),
 		ContentType: JSON,
 		Body:        res,
 	}
@@ -129,23 +131,23 @@ func (manager *workerManager) PublishTask(name string, args []interface{},
 }
 
 // GetTaskResult listens to celery and returns the task result for given task
-func (manager *workerManager) GetTaskResult(task *Task) *TaskResult {
-	// listen to queue
-	message := <-manager.broker.GetTaskResult(task.ID)
-	serializer, _ := serializer.NewSerializer(message.ContentType)
-	// convert message body to task
-	var taskResult TaskResult
-	if message.Body != nil {
-		serializer.Deserialize(message.Body, &taskResult)
-	} else {
-		log.Errorf("Task result message is nil")
-	}
-	return &taskResult
-	// taskResult := &TaskResult{
-	// 	ID:     task.ID,
-	// 	Result: 5,
-	// 	Status: Success,
-	// }
+func (manager *workerManager) GetTaskResult(task *Task) chan *TaskResult {
+	ch := manager.broker.GetTaskResult(task.ID)
+	tc := make(chan *TaskResult)
+	go func() {
+		// listen to queue
+		message := <-ch
+		serializer, _ := serializer.NewSerializer(message.ContentType)
+		// convert message body to task
+		var taskResult TaskResult
+		if message.Body != nil {
+			serializer.Deserialize(message.Body, &taskResult)
+		} else {
+			log.Errorf("Task result message is nil")
+		}
+		tc <- &taskResult
+	}()
+	return tc
 }
 
 func (manager *workerManager) startHeartbeat() {
@@ -162,14 +164,14 @@ func (manager *workerManager) startHeartbeat() {
 
 func (manager *workerManager) sendTaskEvent(eventType EventType, payload []byte) {
 	manager.broker.PublishTaskEvent(strings.Replace(eventType.RoutingKey(), "-", ".", -1),
-		&broker.Message{ContentType: JSON, Body: payload})
+		&broker.Message{Timestamp: time.Now(), ContentType: JSON, Body: payload})
 }
 
 // Send Worker Events
 func (manager *workerManager) sendWorkerEvent(eventType EventType) {
 	workerEventPayload, _ := json.Marshal(NewWorkerEvent(eventType))
 	manager.broker.PublishTaskEvent(strings.Replace(eventType.RoutingKey(), "-", ".", -1),
-		&broker.Message{ContentType: JSON, Body: workerEventPayload})
+		&broker.Message{Timestamp: time.Now(), ContentType: JSON, Body: workerEventPayload})
 }
 
 func (manager *workerManager) stopHeartbeat() {
@@ -220,13 +222,13 @@ func (manager *workerManager) runTask(task *Task) (*TaskResult, error) {
 		} else {
 			start := time.Now()
 			result, err := worker.Execute(task)
+			elapsed := time.Since(start)
 
 			manager.Lock()
 			manager.taskExecuted = manager.taskExecuted + 1
 			log.Infof("Executed task [%s] [%s] [%s] in %f seconds", task.Task, task.ID, result, elapsed.Seconds())
 			manager.Unlock()
 
-			elapsed := time.Since(start)
 			if err != nil {
 				log.Errorf("Failed to execute task [%s]: %s", task.Task, err)
 				err = errors.Wrap(err, 1)
@@ -256,7 +258,7 @@ func (manager *workerManager) runTask(task *Task) (*TaskResult, error) {
 
 	res, _ := serializer.Serialize(taskResult)
 	//key := strings.Replace(task.ID, "-", "", -1)
-	manager.broker.PublishTaskResult(task.ID, &broker.Message{ContentType: task.ContentType, Body: res})
+	manager.broker.PublishTaskResult(task.ID, &broker.Message{Timestamp: time.Now(), ContentType: task.ContentType, Body: res})
 
 	// send task completed event
 	if taskEventType != None {

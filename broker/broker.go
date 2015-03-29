@@ -3,12 +3,14 @@ package broker
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	log "github.com/Sirupsen/logrus"
 )
 
 // Message is the data got from broker
 type Message struct {
+	Timestamp   time.Time
 	ContentType string
 	Body        []byte
 }

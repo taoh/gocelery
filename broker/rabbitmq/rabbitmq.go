@@ -1,4 +1,4 @@
-package gocelery
+package rabbitmq
 
 import (
 	"fmt"
@@ -163,14 +163,38 @@ func (b *RabbitMqBroker) channelForTask(name string) *amqp.Channel {
 // GetTaskResult fetchs task result for the specified taskID
 func (b *RabbitMqBroker) GetTaskResult(taskID string) <-chan *broker.Message {
 	msg := make(chan *broker.Message)
+	// fetch messages
+	log.Debug("Waiting for Task Result Messages: ", taskID)
+	channel := b.channelForTask(taskID)
+	if channel == nil {
+		log.Error("Cannot get channel for task")
+		return nil
+	}
+
+	log.Debug("Creating queues for Task:", taskID)
+	// create task result queue
+	var arguments amqp.Table
+	// queueExpires := viper.GetInt("resultQueueExpires") //ARGV:
+	// if queueExpires > 0 {
+	// 	arguments = amqp.Table{"x-expires": queueExpires}
+	// }
+	if err := b.newQueue(taskID, true, true, arguments); err != nil {
+		log.Error("Failed to create queue: ", err)
+		return nil
+	}
+	log.Debug("Created Task Result Queue")
+	// bind queue to exchange
+	if err := b.channelForTask(taskID).QueueBind(
+		taskID,          // queue name
+		taskID,          // routing key
+		"celeryresults", // exchange name
+		false,           // noWait
+		nil,             // arguments
+	); err != nil {
+		return nil
+	}
+
 	go func() {
-		// fetch messages
-		log.Debug("Waiting for Task Result Messages: ", taskID)
-		channel := b.channelForTask(taskID)
-		if channel == nil {
-			log.Error("Cannot get channel for task")
-			return
-		}
 		deliveries, err := channel.Consume(
 			taskID,
 			taskID, // Consumer tag
@@ -216,29 +240,7 @@ func (b *RabbitMqBroker) PublishTask(key string, message *broker.Message, ignore
 	}
 
 	if !ignoreResults {
-		log.Debug("Creating queues for Task:", key)
-		// create task result queue
-		var arguments amqp.Table
-		// queueExpires := viper.GetInt("resultQueueExpires") //ARGV:
-		// if queueExpires > 0 {
-		// 	arguments = amqp.Table{"x-expires": queueExpires}
-		// }
-		if err := b.newQueue(key, true, true, arguments); err != nil {
-			log.Error("Failed to create queue: ", err)
-			return err
-		}
-		log.Debug("Created Task Result Queue")
-		// bind queue to exchange
-		queueName := key
-		if err := b.channelForTask(key).QueueBind(
-			queueName,       // queue name
-			queueName,       // routing key
-			"celeryresults", // exchange name
-			false,           // noWait
-			nil,             // arguments
-		); err != nil {
-			return err
-		}
+
 	} else {
 		log.Debug("Task Result ignored")
 	}

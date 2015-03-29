@@ -14,7 +14,8 @@ func main() {
 	args := []interface{}{i, j}
 
 	worker := gocelery.New(&gocelery.Config{
-		LogLevel: "debug",
+		LogLevel:  "info",
+		BrokerURL: "nats://localhost:4222",
 	})
 	defer worker.Close()
 
