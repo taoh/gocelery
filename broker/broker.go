@@ -17,12 +17,12 @@ type Message struct {
 
 // Broker implements the underlying broker for the task queue
 type Broker interface {
-	Connect(string) error
-	GetTasks() <-chan *Message
-	GetTaskResult(string) <-chan *Message
-	PublishTask(string, *Message, bool) error
-	PublishTaskResult(string, *Message) error
-	PublishTaskEvent(string, *Message) error
+	Connect(brokerURL string) error
+	GetTasks(queue string) <-chan *Message
+	GetTaskResult(taskID string) <-chan *Message
+	PublishTask(queueName string, taskID string, msg *Message, ignoreResults bool) error
+	PublishTaskResult(taskID string, msg *Message) error
+	PublishTaskEvent(taskID string, msg *Message) error
 	Close() error
 }
 

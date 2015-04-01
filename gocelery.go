@@ -16,6 +16,11 @@ import (
 	"github.com/twinj/uuid"
 )
 
+const (
+	// DefaultQueue is the default task queue name
+	DefaultQueue = "celery"
+)
+
 // GoCelery creates an instance of entry
 type GoCelery struct {
 	config        *Config
@@ -71,10 +76,11 @@ func setupLogLevel(config *Config) {
 	log.Debug("Log Level: ", level)
 }
 
-// Enqueue adds a task to queue to be executed immediately. If ignoreResult is true
+// EnqueueInQueue adds a task to queue to be executed immediately. If ignoreResult is true
 // the function returns immediately with a nil channel returned. Otherwise, a result
 // channel is returned so client can wait for the result.
-func (gocelery *GoCelery) Enqueue(taskName string, args []interface{}, ignoreResult bool) (chan *TaskResult, error) {
+func (gocelery *GoCelery) EnqueueInQueue(queueName string, taskName string, args []interface{}, ignoreResult bool) (chan *TaskResult, error) {
+	log.Debugf("Enqueuing [%s] in queue [%s]", taskName, queueName)
 	task := &Task{
 		Task:    taskName,
 		Args:    args,
@@ -100,7 +106,7 @@ func (gocelery *GoCelery) Enqueue(taskName string, args []interface{}, ignoreRes
 
 	wg.Wait()
 	log.Debug("Publishing task: ", task.ID)
-	task, err := gocelery.workerManager.PublishTask(task, ignoreResult)
+	task, err := gocelery.workerManager.PublishTask(queueName, task, ignoreResult)
 	if err != nil {
 		return nil, err
 	}
@@ -112,17 +118,35 @@ func (gocelery *GoCelery) Enqueue(taskName string, args []interface{}, ignoreRes
 	return taskResult, nil
 }
 
-// EnqueueWithSchedule adds a task that is scheduled repeatedly.
+// Enqueue adds a task to queue to be executed immediately. If ignoreResult is true
+// the function returns immediately with a nil channel returned. Otherwise, a result
+// channel is returned so client can wait for the result.
+func (gocelery *GoCelery) Enqueue(taskName string, args []interface{}, ignoreResult bool) (chan *TaskResult, error) {
+	return gocelery.EnqueueInQueue(DefaultQueue, taskName, args, ignoreResult)
+}
+
+// EnqueueInQueueWithSchedule adds a task that is scheduled repeatedly.
 // Schedule is specified in a string with cron format
-func (gocelery *GoCelery) EnqueueWithSchedule(spec string, taskName string, args []interface{}) error {
+func (gocelery *GoCelery) EnqueueInQueueWithSchedule(spec string, queueName string, taskName string, args []interface{}) error {
 	return gocelery.cron.AddFunc(spec, func() {
 		log.Infof("Running scheduled task %s: %s", spec, taskName)
-		gocelery.Enqueue(taskName, args, true)
+		gocelery.EnqueueInQueue(queueName, taskName, args, true)
 	})
 }
 
-// StartWorkers start running the workers
+// EnqueueWithSchedule adds a task that is scheduled repeatedly.
+// Schedule is specified in a string with cron format
+func (gocelery *GoCelery) EnqueueWithSchedule(spec string, queueName string, taskName string, args []interface{}) error {
+	return gocelery.EnqueueInQueueWithSchedule(spec, DefaultQueue, taskName, args)
+}
+
+// StartWorkersWithQueues start running the workers
+func (gocelery *GoCelery) StartWorkersWithQueues(queues []string) {
+	log.Info("gocelery worker started with queues %s", queues)
+	gocelery.workerManager.Start(queues)
+}
+
+// StartWorkers start running the workers with default queue
 func (gocelery *GoCelery) StartWorkers() {
-	log.Info("gocelery started.")
-	gocelery.workerManager.Start()
+	gocelery.StartWorkersWithQueues([]string{DefaultQueue})
 }

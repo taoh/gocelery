@@ -11,8 +11,6 @@ import (
 )
 
 const (
-	// TaskChannel for task pubsub
-	TaskChannel string = "gocelerytask"
 	// TaskEventChannel for task event pubsub
 	TaskEventChannel string = "gocelerytaskevent"
 )
@@ -61,12 +59,12 @@ func (b *Broker) Close() error {
 }
 
 // GetTasks waits and fetches the tasks from queue
-func (b *Broker) GetTasks() <-chan *broker.Message {
+func (b *Broker) GetTasks(queue string) <-chan *broker.Message {
 	msg := make(chan *broker.Message)
 
 	// fetch messages
-	log.Infof("Waiting for tasks at: %s", b.natsURL)
-	b.connection.Subscribe(TaskChannel, func(m *broker.Message) {
+	log.Infof("Waiting for tasks at: %s, queue: %s", b.natsURL, queue)
+	b.connection.Subscribe(queue, func(m *broker.Message) {
 		msg <- m
 	})
 	return msg
@@ -88,8 +86,8 @@ func (b *Broker) GetTaskResult(taskID string) <-chan *broker.Message {
 }
 
 // PublishTask sends a task to queue
-func (b *Broker) PublishTask(key string, message *broker.Message, ignoreResults bool) error {
-	err := b.connection.Publish(TaskChannel, message)
+func (b *Broker) PublishTask(queueName, key string, message *broker.Message, ignoreResults bool) error {
+	err := b.connection.Publish(queueName, message)
 	if err != nil {
 		return err
 	}

@@ -3,6 +3,9 @@
 package main
 
 import (
+	"flag"
+	"strings"
+
 	log "github.com/Sirupsen/logrus"
 	"github.com/taoh/gocelery"
 )
@@ -31,6 +34,10 @@ func (a *Adder) Execute(task *gocelery.Task) (result interface{}, err error) {
 }
 
 func main() {
+
+	var queues = flag.String("queues", "", "queues for running the workers. Use comma to separate multiple queues")
+	flag.Parse()
+
 	worker := gocelery.New(&gocelery.Config{
 		LogLevel:  "info",
 		BrokerURL: "nats://localhost:4222",
@@ -44,6 +51,12 @@ func main() {
 		log.Debugf("Registered Worker: %s", worker)
 	}
 
-	// start executing
-	worker.StartWorkers()
+	if *queues == "" {
+		// start executing
+		worker.StartWorkers()
+	} else {
+		// start executing
+		worker.StartWorkersWithQueues(strings.Split(*queues, ","))
+	}
+
 }

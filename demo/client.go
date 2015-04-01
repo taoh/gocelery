@@ -3,11 +3,16 @@
 package main
 
 import (
+	"flag"
+
 	log "github.com/Sirupsen/logrus"
 	"github.com/taoh/gocelery"
 )
 
 func main() {
+	var queues = flag.String("queue", "", "queue for sending the tasks to.")
+	flag.Parse()
+
 	log.Info("We can run the task and ignore result")
 	i := 13
 	j := 12
@@ -27,11 +32,21 @@ func main() {
 
 	log.Info("Task Executed.")
 
-	taskResult, _ := worker.Enqueue(
-		"tasks.add", // task name
-		args,        // arguments
-		false,       // ignoreResults
-	)
+	var taskResult chan *gocelery.TaskResult
+	if *queues == "" {
+		taskResult, _ = worker.Enqueue(
+			"tasks.add", // task name
+			args,        // arguments
+			false,       // ignoreResults
+		)
+	} else {
+		taskResult, _ = worker.EnqueueInQueue(
+			*queues,
+			"tasks.add", // task name
+			args,        // arguments
+			false,       // ignoreResults
+		)
+	}
 
 	tr := <-taskResult
 	log.Infof("We can also run the task and return result: %d + %d = %d", i, j, int64(tr.Result.(float64)))

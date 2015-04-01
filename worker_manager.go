@@ -39,8 +39,37 @@ func (manager *workerManager) Connect() error {
 	return nil
 }
 
+func merge(done <-chan bool, cs ...<-chan *broker.Message) <-chan *broker.Message {
+	var wg sync.WaitGroup
+	out := make(chan *broker.Message)
+
+	// Start an output goroutine for each input channel in cs.  output
+	// copies values from c to out until c is closed, then calls wg.Done.
+	output := func(c <-chan *broker.Message) {
+		for n := range c {
+			select {
+			case out <- n:
+			case <-done:
+			}
+		}
+		wg.Done()
+	}
+	wg.Add(len(cs))
+	for _, c := range cs {
+		go output(c)
+	}
+
+	// Start a goroutine to close out once all the output goroutines are
+	// done.  This must start after the wg.Add call.
+	go func() {
+		wg.Wait()
+		close(out)
+	}()
+	return out
+}
+
 // Start worker runs the worker command
-func (manager *workerManager) Start() {
+func (manager *workerManager) Start(queues []string) {
 	sigs := make(chan os.Signal, 1)
 	done := make(chan bool, 1)
 
@@ -62,7 +91,12 @@ func (manager *workerManager) Start() {
 	manager.startHeartbeat()
 
 	// start getting tasks
-	ch := manager.broker.GetTasks()
+	taskChannels := make([]<-chan *broker.Message, 3)
+	for _, queue := range queues {
+		taskChannel := manager.broker.GetTasks(queue)
+		taskChannels = append(taskChannels, taskChannel)
+	}
+	ch := merge(done, taskChannels...)
 	for {
 		select {
 		case <-done:
@@ -115,7 +149,7 @@ func (manager *workerManager) Start() {
 }
 
 // PublishTask sends a task to task queue as a client
-func (manager *workerManager) PublishTask(task *Task, ignoreResult bool) (*Task, error) {
+func (manager *workerManager) PublishTask(queueName string, task *Task, ignoreResult bool) (*Task, error) {
 	res, err := json.Marshal(task)
 	if err != nil {
 		return nil, err
@@ -125,7 +159,7 @@ func (manager *workerManager) PublishTask(task *Task, ignoreResult bool) (*Task,
 		ContentType: JSON,
 		Body:        res,
 	}
-	manager.broker.PublishTask(task.ID, message, ignoreResult)
+	manager.broker.PublishTask(queueName, task.ID, message, ignoreResult)
 	// return the task object
 	return task, nil
 }

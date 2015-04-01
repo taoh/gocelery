@@ -12,10 +12,20 @@ import (
 	"github.com/streadway/amqp"
 )
 
+const (
+	// DefaultExchange name
+	DefaultExchange = "celery"
+	// DefaultTaskResultExchange name
+	DefaultTaskResultExchange = "celeryresults"
+	// DefaultTaskEventExchange name
+	DefaultTaskEventExchange = "celeryev"
+)
+
 // RabbitMqBroker implements RabbitMq broker
 type RabbitMqBroker struct {
 	sync.Mutex
 	amqpURL string
+	queues  map[string]bool
 
 	connection      *amqp.Connection
 	channel         *amqp.Channel
@@ -55,42 +65,19 @@ func (b *RabbitMqBroker) Connect(uri string) error {
 	log.Debug("Connected to rabbitmq")
 	//create exchanges
 	// note that the exchange must be the same as celery to avoid fatal errors
-	err = b.newExchange("celery", "direct", true, false)
+	err = b.newExchange(DefaultExchange, "direct", true, false)
 	if err != nil {
 		return err
 	}
-	if err = b.newExchange("celeryresults", "direct", true, false); err != nil {
+	if err = b.newExchange(DefaultTaskResultExchange, "direct", true, false); err != nil {
 		return err
 	}
-	if err = b.newExchange("celeryev", "topic", true, false); err != nil {
+	if err = b.newExchange(DefaultTaskEventExchange, "topic", true, false); err != nil {
 		return err
 	}
 
 	log.Debug("Created exchanges")
-
-	// create and bind queues
-	queueName := queueName()
-	var arguments amqp.Table
-	// queueExpires := viper.GetInt("queueExpires") //ARGV:
-	// if queueExpires > 0 {
-	// 	arguments = amqp.Table{"x-expires": queueExpires}
-	// }
-	if err = b.newQueue(queueName, true, false, arguments); err != nil {
-		return err
-	}
-	log.Debug("Created Task Queue")
-	// bind queue to exchange
-	if err = b.channel.QueueBind(
-		queueName, // queue name
-		queueName, // routing key
-		"celery",  // exchange name
-		false,     // noWait
-		nil,       // arguments
-	); err != nil {
-		return err
-	}
-	log.Debug("Queue is bound to exchange")
-
+	b.queues = make(map[string]bool)
 	return nil
 }
 
@@ -101,13 +88,24 @@ func (b *RabbitMqBroker) Close() error {
 }
 
 // GetTasks waits and fetches the tasks from queue
-func (b *RabbitMqBroker) GetTasks() <-chan *broker.Message {
+func (b *RabbitMqBroker) GetTasks(queueName string) <-chan *broker.Message {
+	// check if queue has been created, if not, create a queue
+	b.Lock()
+	if val, exists := b.queues[queueName]; !exists || !val {
+		if err := b.ensureQueueBind(queueName); err != nil {
+			log.Error("Failed to bind to queue: ", err)
+			return nil
+		}
+		b.queues[queueName] = true
+	}
+	b.Unlock()
+
 	msg := make(chan *broker.Message)
 	go func() {
 		// fetch messages
 		log.Infof("Waiting for tasks at: %s", b.amqpURL)
 		deliveries, err := b.channel.Consume(
-			"celery",
+			queueName,
 			"",   // Consumer
 			true, // AutoAck
 			false, false, false, nil)
@@ -230,8 +228,43 @@ func (b *RabbitMqBroker) GetTaskResult(taskID string) <-chan *broker.Message {
 	return msg
 }
 
+func (b *RabbitMqBroker) ensureQueueBind(queueName string) error {
+	// create and bind queues
+	var arguments amqp.Table
+	// queueExpires := viper.GetInt("queueExpires") //ARGV:
+	// if queueExpires > 0 {
+	// 	arguments = amqp.Table{"x-expires": queueExpires}
+	// }
+	if err := b.newQueue(queueName, true, false, arguments); err != nil {
+		return err
+	}
+	// bind queue to exchange
+	if err := b.channel.QueueBind(
+		queueName,       // queue name
+		queueName,       // routing key
+		DefaultExchange, // exchange name
+		false,           // noWait
+		nil,             // arguments
+	); err != nil {
+		return err
+	}
+	log.Debug("Queue is bound to exchange")
+	return nil
+}
+
 // PublishTask sends a task to queue
-func (b *RabbitMqBroker) PublishTask(key string, message *broker.Message, ignoreResults bool) error {
+func (b *RabbitMqBroker) PublishTask(queueName string, taskID string, message *broker.Message, ignoreResults bool) error {
+	// check if queue has been created, if not, create a queue
+	b.Lock()
+	if val, exists := b.queues[queueName]; !exists || !val {
+		if err := b.ensureQueueBind(queueName); err != nil {
+			log.Error("Failed to bind to queue: ", err)
+			return err
+		}
+		b.queues[queueName] = true
+	}
+	b.Unlock()
+
 	msg := amqp.Publishing{
 		DeliveryMode: amqp.Persistent,
 		Timestamp:    time.Now(),
@@ -245,7 +278,8 @@ func (b *RabbitMqBroker) PublishTask(key string, message *broker.Message, ignore
 		log.Debug("Task Result ignored")
 	}
 	log.Debug("Publishing Task to queue")
-	return b.channel.Publish("celery", "celery", false, false, msg)
+	routingKey := queueName // routing key is the same as queuename
+	return b.channel.Publish(DefaultExchange, routingKey, false, false, msg)
 }
 
 // PublishTaskResult sends task result back to task queue
