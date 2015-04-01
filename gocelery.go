@@ -13,6 +13,8 @@ import (
 	_ "github.com/taoh/gocelery/broker/nats"
 	// import rabbitmq broker
 	_ "github.com/taoh/gocelery/broker/rabbitmq"
+	// import redis broker
+	_ "github.com/taoh/gocelery/broker/redis"
 	"github.com/twinj/uuid"
 )
 

@@ -83,7 +83,7 @@ func (b *RabbitMqBroker) Connect(uri string) error {
 
 // Close the broker and cleans up resources
 func (b *RabbitMqBroker) Close() error {
-	log.Debug("Closing broker: ", b)
+	log.Debug("Closing broker: ", b.amqpURL)
 	return b.connection.Close()
 }
 

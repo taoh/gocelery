@@ -39,8 +39,9 @@ func main() {
 	flag.Parse()
 
 	worker := gocelery.New(&gocelery.Config{
-		LogLevel:  "info",
-		BrokerURL: "nats://localhost:4222",
+		LogLevel: "info",
+		//BrokerURL: "nats://localhost:4222",
+		BrokerURL: "redis://localhost:6379",
 	})
 	defer worker.Close()
 

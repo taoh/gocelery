@@ -53,7 +53,7 @@ func (b *Broker) Connect(uri string) error {
 
 // Close the broker and cleans up resources
 func (b *Broker) Close() error {
-	log.Debug("Closing broker: ", b)
+	log.Debug("Closing broker: ", b.natsURL)
 	b.connection.Close()
 	return nil
 }
