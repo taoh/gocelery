@@ -2,6 +2,16 @@
 
 a golang port of [Celery](http://www.celeryproject.org/) distributed task engine. It supports executing and submitting tasks, and can interop with celery engine or celery python client.
 
+[![Build Status](https://travis-ci.org/taoh/gocelery.svg?branch=master)](https://travis-ci.org/taoh/gocelery)
+
+## Features
+
+- Task Queues
+- Task Event Reporting
+- Supported Brokers
+	* RabbitMQ
+	* Redis
+	* Nats
 
 ## Installation
 
